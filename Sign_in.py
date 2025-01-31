@@ -1,7 +1,17 @@
 # -*- coding: utf-8 -*-
+
 """
-cron: 0 10 0 * * *
-new Env('PT_SITE_SIGNIN');
+作者: Hwangzhun
+功能: PT站点自动签到脚本
+日期: 2025-01-31
+版本: v1.0
+"""
+# -*- coding: utf-8 -*-
+"""
+作者: 你的名字
+功能: PT站点自动签到脚本
+日期: 2025-01-31
+版本: v1.0
 """
 
 import json
@@ -21,7 +31,25 @@ except json.JSONDecodeError:
     print("❌ PT_SITES 变量格式错误，请检查 JSON 格式！")
     pt_sites = []
 
-def sign_in(site_name, site_url, cookie, max_retries, retry_interval):
+# 代理配置读取
+def get_proxies():
+    proxy = os.getenv("PT_PROXY", "")  # 从环境变量获取代理
+    if proxy:
+        if re.match(r'^http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,5}$', proxy):
+            proxies = {
+                'http': proxy,
+                'https': proxy
+            }
+            print(f"✅ 使用代理: {proxy}")
+            return proxies
+        else:
+            print("⚠️ 代理格式不正确，仅支持 http://address:port 格式")
+            return None
+    else:
+        print("🛑 未设置代理")
+        return None
+
+def sign_in(site_name, site_url, cookie, max_retries, retry_interval, proxies):
     """ 执行签到 """
     retries = 0
     success = False
@@ -35,7 +63,7 @@ def sign_in(site_name, site_url, cookie, max_retries, retry_interval):
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
                 'Referer': site_url
             }
-            rsp = requests.get(url=site_url, headers=headers, timeout=15, verify=False)
+            rsp = requests.get(url=site_url, headers=headers, timeout=15, verify=False, proxies=proxies)
 
             if rsp.status_code != 200:
                 msg += f"❌ 站点 {site_name} 返回 HTTP 状态码 {rsp.status_code}\n"
@@ -83,6 +111,8 @@ if __name__ == "__main__":
     if not pt_sites:
         print("❌ 未配置任何 PT 站点，请检查环境变量 PT_SITES。")
     else:
+        proxies = get_proxies()  # 获取代理设置
+
         for site in pt_sites:
             site_name = site.get("name")
             site_url = site.get("url")
@@ -94,7 +124,7 @@ if __name__ == "__main__":
                 print(f"⚠️ 站点 {site_name} 配置不完整，已跳过。")
                 continue
 
-            result = sign_in(site_name, site_url, cookie, max_retries, retry_interval)
+            result = sign_in(site_name, site_url, cookie, max_retries, retry_interval, proxies)
             results.append(result)
 
     # 发送通知（签到结果推送到 Server 酱）
