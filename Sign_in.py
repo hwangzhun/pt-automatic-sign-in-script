@@ -1,132 +1,96 @@
-# -*- coding: utf-8 -*-
-
 """
-作者: Hwangzhun
-功能: PT站点自动签到脚本
-日期: 2025-01-31
-版本: v1.0
-"""
-# -*- coding: utf-8 -*-
-"""
-作者: 你的名字
-功能: PT站点自动签到脚本
-日期: 2025-01-31
-版本: v1.0
+@Author: Hwangzhun
+@Date: 2025-02-01
+@Description: PT 站点自动签到脚本，支持多个站点，支持繁体/简体站点，支持代理，适用于青龙面板
+@Version: v1.1
 """
 
-import json
-import requests
-import re
+
 import os
+import re
 import time
-from notify import send  # 青龙面板自带推送模块
+import requests
+from notify import send  # 青龙面板自带通知模块
+
+# 关闭 SSL 证书警告
 requests.packages.urllib3.disable_warnings()
 
-# 站点信息（环境变量读取）
+# 读取环境变量
+PT_SITES = os.getenv("PT_SITES")  # 站点信息 (JSON 格式)
+PT_PROXY = os.getenv("PT_PROXY", "")  # 代理地址 (统一代理)
+SERVER_KEY = os.getenv("SERVERCHAN_SENDKEY")  # Server 酱通知推送 Key
+
+# 检查 PT_SITES 变量是否为空
+if not PT_SITES:
+    print("❌ 未找到 PT_SITES 变量，请在青龙面板中配置！")
+    exit(1)
+
+# 解析 JSON 站点列表
 try:
-    pt_sites = json.loads(os.getenv("PT_SITES", "[]"))
-    if isinstance(pt_sites, list) and all(isinstance(item, str) for item in pt_sites):
-        pt_sites = [json.loads(item) for item in pt_sites]
-except json.JSONDecodeError:
-    print("❌ PT_SITES 变量格式错误，请检查 JSON 格式！")
-    pt_sites = []
+    pt_sites = eval(PT_SITES)  # 解析 JSON
+except Exception as e:
+    print("❌ 解析 PT_SITES 变量失败，请检查格式是否正确！", str(e))
+    exit(1)
 
-# 代理配置读取
-def get_proxies():
-    proxy = os.getenv("PT_PROXY", "")  # 从环境变量获取代理
-    if proxy:
-        if re.match(r'^http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,5}$', proxy):
-            proxies = {
-                'http': proxy,
-                'https': proxy
-            }
-            print(f"✅ 使用代理: {proxy}")
-            return proxies
-        else:
-            print("⚠️ 代理格式不正确，仅支持 http://address:port 格式")
-            return None
-    else:
-        print("🛑 未设置代理")
-        return None
+# 代理配置（如果 PT_PROXY 为空，则不使用代理）
+proxies = {"http": PT_PROXY, "https": PT_PROXY} if PT_PROXY else None
 
-def sign_in(site_name, site_url, cookie, max_retries, retry_interval, proxies):
-    """ 执行签到 """
+# 遍历所有 PT 站点签到
+results = []
+for site in pt_sites:
+    site_name = site.get("name")  # 站点名称
+    sign_in_url = site.get("url")  # 签到地址
+    cookie = site.get("cookie")  # 站点 Cookie
+    max_retries = site.get("max_retries", 3)  # 最大重试次数
+    retry_interval = site.get("retry_interval", 20)  # 重试间隔（秒）
+
+    print(f"🚀 开始签到：{site_name}")
     retries = 0
     success = False
-    msg = f"\n🚀 开始签到站点: {site_name} ({site_url})\n"
 
     while retries < max_retries:
         try:
-            msg += f"🔄 第 {retries + 1} 次尝试签到...\n"
+            # 发送签到请求
             headers = {
-                'Cookie': cookie,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-                'Referer': site_url
+                "Cookie": cookie,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
             }
-            rsp = requests.get(url=site_url, headers=headers, timeout=15, verify=False, proxies=proxies)
+            response = requests.get(sign_in_url, headers=headers, proxies=proxies, timeout=15, verify=False)
+            response_text = response.text  # 获取响应内容
 
-            if rsp.status_code != 200:
-                msg += f"❌ 站点 {site_name} 返回 HTTP 状态码 {rsp.status_code}\n"
-                retries += 1
-                time.sleep(retry_interval)
-                continue
+            # 解析签到信息（兼容繁体/简体）
+            pattern = r'(?:这是您的第|這是您的第) <b>(\d+)</b> (?:次签到|次簽到)，(?:已连续签到|已連續簽到) <b>(\d+)</b> (?:天，本次签到获得|天，本次簽到獲得) <b>(\d+)</b> (?:个魔力值|個魔力值)'
+            match = re.search(pattern, response_text)
 
-            rsp_text = rsp.text
-            sign_count = re.search(r"这是您的第 <b>(\d+)</b> 次签到", rsp_text)
-            continuous_days = re.search(r"已连续签到 <b>(\d+)</b> 天", rsp_text)
-            earned_magic = re.search(r"本次签到获得 <b>(\d+)</b> 个魔力值", rsp_text)
-            repair_card = re.search(r"你目前拥有补签卡 <b>(\d+)</b> 张", rsp_text)
-            sign_rank = re.search(r"今日签到排名：<b>(\d+)</b> / <b>(\d+)</b>", rsp_text)
-
-            if sign_count and earned_magic:
-                msg += f"""
-                ✅ 签到成功！
-                📅 第 {sign_count.group(1)} 次签到
-                🔥 连续签到 {continuous_days.group(1) if continuous_days else '未知'} 天
-                ✨ 获得 {earned_magic.group(1)} 魔力值
-                🎟️ 补签卡数量: {repair_card.group(1) if repair_card else '未知'}
-                🏆 今日排名: {sign_rank.group(1) if sign_rank else '未知'} / {sign_rank.group(2) if sign_rank else '未知'}
-                """
+            if match:
+                total_signin = match.group(1)
+                consecutive_days = match.group(2)
+                earned_points = match.group(3)
+                result_msg = f"✅ {site_name} 签到成功！\n- 第 {total_signin} 次签到\n- 连续签到 {consecutive_days} 天\n- 获得魔力值: {earned_points}"
+                print(result_msg)
+                results.append(result_msg)
                 success = True
-                break
+                break  # 成功签到后跳出循环
+
+            elif "503 Service Temporarily" in response_text or "502 Bad Gateway" in response_text:
+                print(f"⚠️ {site_name} 服务器异常，稍后重试...")
             else:
-                msg += "⚠️ 签到失败，可能是 Cookie 失效或未匹配到签到成功信息。\n"
-                retries += 1
-                time.sleep(retry_interval)
+                print(f"❌ {site_name} 签到失败，未能解析签到信息！")
+                print(response_text[:500])  # 输出部分响应内容，方便调试
 
         except Exception as e:
-            msg += f"❌ 发生错误: {str(e)}\n"
-            retries += 1
+            print(f"⚠️ {site_name} 请求失败: {str(e)}")
+
+        retries += 1
+        if retries < max_retries:
+            print(f"⏳ 等待 {retry_interval} 秒后重试...")
             time.sleep(retry_interval)
-
+    
     if not success:
-        msg += f"🚫 站点 {site_name} 签到失败，已跳过。\n"
+        results.append(f"❌ {site_name} 签到失败，达到最大重试次数！")
 
-    print(msg)
-    return msg
+# 发送签到结果通知
+if SERVER_KEY and results:
+    send("PT 站签到结果", "\n\n".join(results))
 
-if __name__ == "__main__":
-    results = []
-
-    if not pt_sites:
-        print("❌ 未配置任何 PT 站点，请检查环境变量 PT_SITES。")
-    else:
-        proxies = get_proxies()  # 获取代理设置
-
-        for site in pt_sites:
-            site_name = site.get("name")
-            site_url = site.get("url")
-            cookie = site.get("cookie")
-            max_retries = site.get("max_retries", 3)  # 默认 3 次重试
-            retry_interval = site.get("retry_interval", 20)  # 默认 20 秒重试间隔
-
-            if not site_name or not site_url or not cookie:
-                print(f"⚠️ 站点 {site_name} 配置不完整，已跳过。")
-                continue
-
-            result = sign_in(site_name, site_url, cookie, max_retries, retry_interval, proxies)
-            results.append(result)
-
-    # 发送通知（签到结果推送到 Server 酱）
-    final_msg = "\n".join(results)
-    send("📢 PT 站点签到结果", final_msg)
+print("🎉 所有站点签到任务完成！")

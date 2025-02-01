@@ -1,0 +1,17 @@
+[
+    {
+      "name": "站点1",
+      "url": "https://xxx.com/attendance.php",
+      "cookie": "你的cookie",
+      "max_retries": 5, // 最大重复次数
+      "retry_interval": 10  // 重复最大等待时间 单位；秒
+    },
+    {
+      "name": "站点2",
+      "url": "https://yyy.com/attendance.php",
+      "cookie": "你的cookie",
+      "max_retries": 5, // 最大重复次数
+      "retry_interval": 10  // 重复最大等待时间 单位；秒
+    }
+  ]
+  
