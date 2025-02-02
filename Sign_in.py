@@ -1,10 +1,9 @@
 """
 @Author: Hwangzhun
-@Date: 2025-02-01
+@Date: 2025-02-02
 @Description: PT 站点自动签到脚本，支持多个站点，支持繁体/简体站点，支持代理，适用于青龙面板
-@Version: v1.1
+@Version: v1.2
 """
-
 
 import os
 import re
@@ -17,8 +16,9 @@ requests.packages.urllib3.disable_warnings()
 
 # 读取环境变量
 PT_SITES = os.getenv("PT_SITES")  # 站点信息 (JSON 格式)
-PT_PROXY = os.getenv("PT_PROXY", "")  # 代理地址 (统一代理)
-SERVER_KEY = os.getenv("SERVERCHAN_SENDKEY")  # Server 酱通知推送 Key
+PT_PROXY = os.getenv("PT_PROXY", None)  # 代理地址 (全局代理)
+MAX_RETRIES = int(os.getenv("PT_MAX_RETRIES", 3))  # 默认最大重试次数
+RETRY_INTERVAL = int(os.getenv("PT_RETRY_INTERVAL", 20))  # 默认重试间隔（秒）
 
 # 检查 PT_SITES 变量是否为空
 if not PT_SITES:
@@ -32,8 +32,8 @@ except Exception as e:
     print("❌ 解析 PT_SITES 变量失败，请检查格式是否正确！", str(e))
     exit(1)
 
-# 代理配置（如果 PT_PROXY 为空，则不使用代理）
-proxies = {"http": PT_PROXY, "https": PT_PROXY} if PT_PROXY else None
+# 全局代理配置
+global_proxies = {"http": PT_PROXY, "https": PT_PROXY} if PT_PROXY else None
 
 # 遍历所有 PT 站点签到
 results = []
@@ -41,8 +41,12 @@ for site in pt_sites:
     site_name = site.get("name")  # 站点名称
     sign_in_url = site.get("url")  # 签到地址
     cookie = site.get("cookie")  # 站点 Cookie
-    max_retries = site.get("max_retries", 3)  # 最大重试次数
-    retry_interval = site.get("retry_interval", 20)  # 重试间隔（秒）
+    site_proxy = site.get("proxy", None)  # 站点专属代理（优先级高于全局代理）
+    max_retries = site.get("max_retries", MAX_RETRIES)  # 站点自定义最大重试次数
+    retry_interval = site.get("retry_interval", RETRY_INTERVAL)  # 站点自定义重试间隔（秒）
+
+    # 代理设置（站点独立代理 > 全局代理）
+    proxies = {"http": site_proxy, "https": site_proxy} if site_proxy else global_proxies
 
     print(f"🚀 开始签到：{site_name}")
     retries = 0
@@ -90,7 +94,7 @@ for site in pt_sites:
         results.append(f"❌ {site_name} 签到失败，达到最大重试次数！")
 
 # 发送签到结果通知
-if SERVER_KEY and results:
+if results:
     send("PT 站签到结果", "\n\n".join(results))
 
 print("🎉 所有站点签到任务完成！")
