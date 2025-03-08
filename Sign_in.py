@@ -96,11 +96,11 @@ def main():
                 
                 # 解析上传量
                 upload_raw = tree.xpath('//font[@class="color_uploaded"]/following-sibling::text()[1]')
-                upload = upload_raw[0]
+                upload = upload_raw[0].strip() if ratio_raw else "N/A"
 
                 #解析下载量
                 download_raw = tree.xpath('//font[@class="color_downloaded"]/following-sibling::text()[1]')
-                download = download_raw[0]
+                download = download_raw[0].strip() if ratio_raw else "N/A"
                 
                 # 解析签到数据
                 sign_data = tree.xpath('//td[@class="text"]//p//b/text()')
