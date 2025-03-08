@@ -31,6 +31,8 @@
 3. 在青龙面板添加订阅:
    https://raw.githubusercontent.com/hwangzhun/pt-automatic-sign-in-script/refs/heads/main/Sign_in.py
 
+4. 因为解析数据用到了 Xpath 注意青龙面板里需要添加依赖才能正常工作
+
 ## 感谢
 参考 [icc2022-sign-in](https://github.com/KunCheng-He/icc2022-sign-in)
 

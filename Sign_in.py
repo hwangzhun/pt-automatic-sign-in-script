@@ -1,100 +1,155 @@
 """
 @Author: Hwangzhun
-@Date: 2025-02-02
+@Date: 2025-03-08
 @Description: PT 站点自动签到脚本，支持多个站点，支持繁体/简体站点，支持代理，适用于青龙面板
-@Version: v1.2
+@Version: v1.3
 """
 
 import os
-import re
 import time
 import requests
-from notify import send  # 青龙面板自带通知模块
+from lxml import etree
+from notify import send  # 青龙面板通知模块
 
-# 关闭 SSL 证书警告
+# 禁用SSL证书警告
 requests.packages.urllib3.disable_warnings()
 
-# 读取环境变量
-PT_SITES = os.getenv("PT_SITES")  # 站点信息 (JSON 格式)
-PT_PROXY = os.getenv("PT_PROXY", None)  # 代理地址 (全局代理)
-MAX_RETRIES = int(os.getenv("PT_MAX_RETRIES", 3))  # 默认最大重试次数
-RETRY_INTERVAL = int(os.getenv("PT_RETRY_INTERVAL", 20))  # 默认重试间隔（秒）
+# 环境变量配置
+PT_SITES = os.getenv("PT_SITES")  # JSON格式站点配置
+PT_PROXY = os.getenv("PT_PROXY")  # 全局代理(可选)
+MAX_RETRIES = int(os.getenv("PT_MAX_RETRIES", 3))  # 最大重试次数
+RETRY_INTERVAL = int(os.getenv("PT_RETRY_INTERVAL", 30))  # 重试间隔(秒)
 
-# 检查 PT_SITES 变量是否为空
-if not PT_SITES:
-    print("❌ 未找到 PT_SITES 变量，请在青龙面板中配置！")
-    exit(1)
+def parse_quantity(raw_str):
+    """解析带单位的数量值 (如：'4.076 TB' -> 4.076)"""
+    try:
+        return float(raw_str.split()[0].replace(",", ""))
+    except (IndexError, ValueError, AttributeError):
+        return "N/A"
 
-# 解析 JSON 站点列表
-try:
-    pt_sites = eval(PT_SITES)  # 解析 JSON
-except Exception as e:
-    print("❌ 解析 PT_SITES 变量失败，请检查格式是否正确！", str(e))
-    exit(1)
+def parse_ratio(raw_str):
+    """解析分享率数值 (如：'5.175' -> 5.175)"""
+    try:
+        # 检查 raw_str 是否有 '分享率:' 字符串前缀，如果有则去掉
+        if '分享率:' in raw_str:
+            return float(raw_str.split(":")[1].strip())
+        return float(raw_str.strip())  # 如果已经是数值字符串，直接转化
+    except (IndexError, ValueError, AttributeError):
+        return "N/A"
 
-# 全局代理配置
-global_proxies = {"http": PT_PROXY, "https": PT_PROXY} if PT_PROXY else None
+def parse_bonus(raw_str):
+    """解析魔力值 (如：'魔力值 [使用]: 118,183.1' -> 118183.1)"""
+    try:
+        return float(raw_str.split(":")[1].strip().replace(",", ""))
+    except (IndexError, ValueError, AttributeError):
+        return "N/A"
 
-# 遍历所有 PT 站点签到
-results = []
-for site in pt_sites:
-    site_name = site.get("name")  # 站点名称
-    sign_in_url = site.get("url")  # 签到地址
-    cookie = site.get("cookie")  # 站点 Cookie
-    site_proxy = site.get("proxy", None)  # 站点专属代理（优先级高于全局代理）
-    max_retries = site.get("max_retries", MAX_RETRIES)  # 站点自定义最大重试次数
-    retry_interval = site.get("retry_interval", RETRY_INTERVAL)  # 站点自定义重试间隔（秒）
+def main():
+    if not PT_SITES:
+        print("❌ 未找到 PT_SITES 环境变量")
+        exit(1)
 
-    # 代理设置（站点独立代理 > 全局代理）
-    proxies = {"http": site_proxy, "https": site_proxy} if site_proxy else global_proxies
+    try:
+        sites = eval(PT_SITES)  # 解析JSON配置
+    except Exception as e:
+        print(f"❌ 配置解析失败: {str(e)}")
+        exit(1)
 
-    print(f"🚀 开始签到：{site_name}")
-    retries = 0
-    success = False
+    global_proxies = {"http": PT_PROXY, "https": PT_PROXY} if PT_PROXY else None
+    results = []
 
-    while retries < max_retries:
-        try:
-            # 发送签到请求
-            headers = {
-                "Cookie": cookie,
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-            }
-            response = requests.get(sign_in_url, headers=headers, proxies=proxies, timeout=15, verify=False)
-            response_text = response.text  # 获取响应内容
+    for site in sites:
+        site_name = site.get("name", "未知站点")
+        sign_url = site.get("url")
+        cookie = site.get("cookie")
+        site_proxy = site.get("proxy")
+        retries = 0
+        success = False
 
-            # 解析签到信息（兼容繁体/简体）
-            pattern = r'(?:这是您的第|這是您的第) <b>(\d+)</b> (?:次签到|次簽到)，(?:已连续签到|已連續簽到) <b>(\d+)</b> (?:天，本次签到获得|天，本次簽到獲得) <b>(\d+)</b> (?:个魔力值|個魔力值)'
-            match = re.search(pattern, response_text)
+        # 代理优先级：站点代理 > 全局代理
+        proxies = {"http": site_proxy, "https": site_proxy} if site_proxy else global_proxies
 
-            if match:
-                total_signin = match.group(1)
-                consecutive_days = match.group(2)
-                earned_points = match.group(3)
-                result_msg = f"✅ {site_name} 签到成功！\n- 第 {total_signin} 次签到\n- 连续签到 {consecutive_days} 天\n- 获得魔力值: {earned_points}"
+        print(f"\n🚀 开始处理 [{site_name}]")
+
+        while retries < MAX_RETRIES:
+            try:
+                # 发送请求
+                headers = {
+                    "Cookie": cookie,
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+                }
+                response = requests.get(
+                    sign_url,
+                    headers=headers,
+                    proxies=proxies,
+                    timeout=20,
+                    verify=False
+                )
+                response.raise_for_status()
+                tree = etree.HTML(response.text)
+
+                # 解析用户信息
+                username = tree.xpath('//a[@class="PowerUser_Name" or @class="User_Name"]/b/text()')
+                username = username[0].strip() if username else "N/A"
+
+                # 解析数值数据
+                bonus_raw = tree.xpath('//a[@href="mybonus.php"]/following-sibling::text()[1]')
+                bonus = parse_bonus(bonus_raw[0]) if bonus_raw else "N/A"
+
+                # 解析分享率
+                ratio_raw = tree.xpath('//font[@class="color_ratio"]/following-sibling::text()[1]')
+                ratio = parse_ratio(ratio_raw[0].strip()) if ratio_raw else "N/A"
+                
+                # 解析上传量
+                upload_raw = tree.xpath('//font[@class="color_uploaded"]/following-sibling::text()[1]')
+                upload = parse_quantity(upload_raw[0]) if upload_raw else "N/A"
+
+                #解析下载量
+                download_raw = tree.xpath('//font[@class="color_downloaded"]/following-sibling::text()[1]')
+                download = parse_quantity(download_raw[0]) if download_raw else "N/A"
+
+                # 解析签到数据
+                sign_data = tree.xpath('//td[@class="text"]//p//b/text()')
+                total_sign = sign_data[0] if len(sign_data) > 0 else "N/A"
+                continuous_sign = sign_data[1] if len(sign_data) > 1 else "N/A"
+                current_bonus = sign_data[2] if len(sign_data) > 2 else "N/A"
+
+                # 构建结果消息
+                result_msg = f"""✅ {site_name} 签到成功！
+├ 用户名：{username}
+├ 当前魔力：{bonus if isinstance(bonus, float) else bonus}
+├ 分享比率：{ratio}
+├ 上传总量：{upload}
+├ 下载总量：{download}
+├ 签到统计：第 {total_sign} 次（连续 {continuous_sign} 天）
+└ 本次获得：{current_bonus} 魔力"""
+
                 print(result_msg)
                 results.append(result_msg)
                 success = True
-                break  # 成功签到后跳出循环
+                break
 
-            elif "503 Service Temporarily" in response_text or "502 Bad Gateway" in response_text:
-                print(f"⚠️ {site_name} 服务器异常，稍后重试...")
-            else:
-                print(f"❌ {site_name} 签到失败，未能解析签到信息！")
-                print(response_text[:500])  # 输出部分响应内容，方便调试
+            except requests.exceptions.RequestException as e:
+                print(f"⚠️ 网络请求失败: {str(e)}")
+            except IndexError as e:
+                print(f"⚠️ 解析失败，可能页面结构变更: {str(e)}")
+            except Exception as e:
+                print(f"⚠️ 发生意外错误: {str(e)}")
+            
+            retries += 1
+            if retries < MAX_RETRIES:
+                print(f"⏳ 等待 {RETRY_INTERVAL}秒后重试 ({retries}/{MAX_RETRIES})...")
+                time.sleep(RETRY_INTERVAL)
 
-        except Exception as e:
-            print(f"⚠️ {site_name} 请求失败: {str(e)}")
+        if not success:
+            fail_msg = f"❌ {site_name} 签到失败，已达最大重试次数"
+            print(fail_msg)
+            results.append(fail_msg)
 
-        retries += 1
-        if retries < max_retries:
-            print(f"⏳ 等待 {retry_interval} 秒后重试...")
-            time.sleep(retry_interval)
-    
-    if not success:
-        results.append(f"❌ {site_name} 签到失败，达到最大重试次数！")
+    # 发送通知
+    if results:
+        send("PT 站点签到报告", "\n\n".join(results))
+    print("\n🎉 所有站点处理完成！")
 
-# 发送签到结果通知
-if results:
-    send("PT 站签到结果", "\n\n".join(results))
-
-print("🎉 所有站点签到任务完成！")
+if __name__ == "__main__":
+    main()
