@@ -1,7 +1,7 @@
 """
 @Author: Hwangzhun
 @Date: 2025-03-08
-@Description: PT 站点自动签到脚本，支持多个站点，支持繁体/简体站点，支持代理，适用于青龙面板
+@Description: PT 站点自动签到脚本，仅支持 NexusPHP 框架的站点，支持代理，适用于青龙面板
 @Version: v1.3
 """
 
