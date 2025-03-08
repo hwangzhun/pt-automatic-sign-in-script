@@ -20,12 +20,6 @@ PT_PROXY = os.getenv("PT_PROXY")  # 全局代理(可选)
 MAX_RETRIES = int(os.getenv("PT_MAX_RETRIES", 3))  # 最大重试次数
 RETRY_INTERVAL = int(os.getenv("PT_RETRY_INTERVAL", 30))  # 重试间隔(秒)
 
-def parse_quantity(raw_str):
-    """解析带单位的数量值 (如：'4.076 TB' -> 4.076)"""
-    try:
-        return float(raw_str.split()[0].replace(",", ""))
-    except (IndexError, ValueError, AttributeError):
-        return "N/A"
 
 def parse_ratio(raw_str):
     """解析分享率数值 (如：'5.175' -> 5.175)"""
@@ -102,12 +96,12 @@ def main():
                 
                 # 解析上传量
                 upload_raw = tree.xpath('//font[@class="color_uploaded"]/following-sibling::text()[1]')
-                upload = parse_quantity(upload_raw[0]) if upload_raw else "N/A"
+                upload = upload_raw[0]
 
                 #解析下载量
                 download_raw = tree.xpath('//font[@class="color_downloaded"]/following-sibling::text()[1]')
-                download = parse_quantity(download_raw[0]) if download_raw else "N/A"
-
+                download = download_raw[0]
+                
                 # 解析签到数据
                 sign_data = tree.xpath('//td[@class="text"]//p//b/text()')
                 total_sign = sign_data[0] if len(sign_data) > 0 else "N/A"
